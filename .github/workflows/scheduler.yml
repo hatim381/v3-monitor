@@ -2,8 +2,8 @@ name: Enregistreur V3 Bordeaux
 
 on:
   schedule:
-    # Lance le script toutes les 20 minutes
-    - cron: '*/20 * * * *'
+    # Lance le script toutes les 5 minutes (minimum autorisé par GitHub)
+    - cron: '*/5 * * * *'
   workflow_dispatch: # Permet de le lancer manuellement aussi
 
 permissions:
