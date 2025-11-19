@@ -139,38 +139,62 @@ def get_live_data():
         st.error(f"Erreur API TBM : {e}")
         return pd.DataFrame()
 
-def calculate_realtime_flux(current_df):
-    """Calcule les mouvements cumulés sur la dernière heure"""
+def add_to_historique_24h(current_df):
+    """Ajoute les données actuelles à l'historique glissant de 24h et nettoie les anciennes données"""
     now = get_paris_time()
     
-    # Initialiser l'historique si nécessaire (robustesse)
-    if 'data_history' not in st.session_state:
-        st.session_state.data_history = []
-    
-    # Ajouter les données actuelles avec timestamp
+    # Préparer les données avec timestamp
     current_df_with_time = current_df.copy()
     current_df_with_time['timestamp'] = now
-    st.session_state.data_history.append({
-        'timestamp': now,
-        'data': current_df_with_time
-    })
     
-    # Filtrer pour garder seulement la dernière heure
-    one_hour_ago = now - timedelta(hours=1)
-    st.session_state.data_history = [
-        h for h in st.session_state.data_history 
-        if h['timestamp'] > one_hour_ago
+    # Ajouter les nouvelles données à l'historique
+    if st.session_state.historique_24h.empty:
+        st.session_state.historique_24h = current_df_with_time
+    else:
+        st.session_state.historique_24h = pd.concat(
+            [st.session_state.historique_24h, current_df_with_time], 
+            ignore_index=True
+        )
+    
+    # Nettoyer les données de plus de 24h (rolling buffer)
+    twenty_four_hours_ago = now - timedelta(hours=24)
+    st.session_state.historique_24h = st.session_state.historique_24h[
+        st.session_state.historique_24h['timestamp'] > twenty_four_hours_ago
     ]
     
-    if len(st.session_state.data_history) < 2:
-        return pd.DataFrame()  # Pas assez de données
+    # Mettre à jour le timestamp de dernière synchro
+    st.session_state.last_sync_time = now
+
+def calculate_realtime_flux(period_hours=1):
+    """Calcule les mouvements sur une période donnée en comparant les données actuelles avec celles d'il y a X heures"""
+    now = get_paris_time()
     
-    # Récupérer la première et dernière mesure de la dernière heure
-    first_data = st.session_state.data_history[0]['data'].copy()
-    last_data = st.session_state.data_history[-1]['data'].copy()
+    if st.session_state.historique_24h.empty:
+        return pd.DataFrame()
+    
+    # Filtrer l'historique pour la période demandée
+    period_start = now - timedelta(hours=period_hours)
+    historique_period = st.session_state.historique_24h[
+        st.session_state.historique_24h['timestamp'] >= period_start
+    ].copy()
+    
+    if historique_period.empty:
+        return pd.DataFrame()
+    
+    # Grouper par station et récupérer la première et dernière valeur de Total
+    first_timestamp = historique_period['timestamp'].min()
+    last_timestamp = historique_period['timestamp'].max()
+    
+    # Récupérer les données au début de la période
+    first_data = historique_period[historique_period['timestamp'] == first_timestamp][['Station', 'Total']].copy()
+    first_data = first_data.rename(columns={'Total': 'Total_prev'})
+    
+    # Récupérer les données à la fin de la période
+    last_data = historique_period[historique_period['timestamp'] == last_timestamp][['Station', 'Total']].copy()
+    last_data = last_data.rename(columns={'Total': 'Total_curr'})
     
     # Fusionner pour comparer
-    merged = last_data.merge(first_data, on='Station', suffixes=('_curr', '_prev'), how='outer')
+    merged = last_data.merge(first_data, on='Station', how='outer')
     
     # Remplir les NaN
     merged['Total_curr'] = merged['Total_curr'].fillna(0)
@@ -197,6 +221,13 @@ def calculate_realtime_flux(current_df):
 # Initialisation robuste de session_state (au début pour éviter les pertes de données)
 if 'data_history' not in st.session_state:
     st.session_state.data_history = []
+
+if 'historique_24h' not in st.session_state:
+    # DataFrame persistant pour l'historique glissant de 24h
+    st.session_state.historique_24h = pd.DataFrame()
+
+if 'last_sync_time' not in st.session_state:
+    st.session_state.last_sync_time = None
 
 if 'previous_metrics' not in st.session_state:
     st.session_state.previous_metrics = {
@@ -339,16 +370,40 @@ with tab1:
 
 # --- ONGLET 2 : FLUX TEMPS RÉEL ---
 with tab2:
-    st.header("⚡ Mouvements de la Dernière Heure")
-    st.info("💡 **Comment ça marche ?** Les mouvements sont calculés automatiquement sur la dernière heure. Actualisez régulièrement pour accumuler les données.")
+    # Ajouter les données actuelles à l'historique glissant
+    if not df_live.empty:
+        add_to_historique_24h(df_live)
     
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("🔄 Actualiser les données", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-    with col_btn2:
-        # Bouton de réinitialisation moins visible avec avertissement
+    # Filtre de période d'analyse
+    col_period, col_info = st.columns([2, 3])
+    with col_period:
+        period_options = {
+            "1 heure": 1,
+            "3 heures": 3,
+            "6 heures": 6,
+            "12 heures": 12,
+            "24 heures": 24
+        }
+        selected_period = st.selectbox(
+            "📊 Période d'analyse",
+            options=list(period_options.keys()),
+            index=0,
+            help="Choisissez la période pour calculer les mouvements de vélos"
+        )
+        period_hours = period_options[selected_period]
+    
+    st.header(f"⚡ Flux Temps Réel - Monitoring Automatique ({selected_period})")
+    
+    with col_info:
+        # Indicateur de dernière synchro
+        if st.session_state.last_sync_time:
+            last_sync_str = st.session_state.last_sync_time.strftime("%H:%M:%S")
+            st.markdown(f"**🔄 Dernière synchro : {last_sync_str}**")
+        else:
+            st.markdown("**🔄 Dernière synchro : En attente...**")
+    
+    # Bouton de réinitialisation (optionnel, moins visible)
+    with st.expander("⚙️ Options avancées", expanded=False):
         if st.button("🗑️ Réinitialiser l'historique", use_container_width=True, type="secondary"):
             st.session_state.confirm_reset = True
         
@@ -358,8 +413,8 @@ with tab2:
             col_confirm, col_cancel = st.columns(2)
             with col_confirm:
                 if st.button("✅ Confirmer", use_container_width=True, type="primary"):
-                    if 'data_history' in st.session_state:
-                        del st.session_state.data_history
+                    st.session_state.historique_24h = pd.DataFrame()
+                    st.session_state.last_sync_time = None
                     if 'previous_metrics' in st.session_state:
                         st.session_state.previous_metrics = {
                             'total_bikes': None,
@@ -373,24 +428,25 @@ with tab2:
                     st.session_state.confirm_reset = False
                     st.rerun()
     
-    # Afficher l'heure actuelle et les infos de l'historique
-    current_time = get_paris_time().strftime("%H:%M:%S - %d/%m/%Y")
-    st.markdown(f"**🕐 Heure actuelle : {current_time}**")
+    # Message d'attente si l'historique est vide
+    if st.session_state.historique_24h.empty:
+        st.info("⏳ **Initialisation du monitoring...** Les données sont en cours de collecte. Veuillez patienter quelques instants.")
+        st.stop()
     
-    # Afficher le nombre de mesures dans l'historique
-    if 'data_history' in st.session_state and len(st.session_state.data_history) > 0:
-        nb_mesures = len(st.session_state.data_history)
-        oldest = st.session_state.data_history[0]['timestamp']
-        newest = st.session_state.data_history[-1]['timestamp']
-        duree = (newest - oldest).total_seconds() / 60  # en minutes
+    # Afficher les infos de l'historique
+    if not st.session_state.historique_24h.empty:
+        nb_mesures = len(st.session_state.historique_24h)
+        oldest = st.session_state.historique_24h['timestamp'].min()
+        newest = st.session_state.historique_24h['timestamp'].max()
+        duree = (newest - oldest).total_seconds() / 3600  # en heures
         
         oldest_str = oldest.strftime("%H:%M:%S")
         newest_str = newest.strftime("%H:%M:%S")
         
-        st.caption(f"📊 {nb_mesures} mesures collectées | Période : {oldest_str} → {newest_str} ({duree:.0f} min)")
+        st.caption(f"📊 {nb_mesures} mesures collectées | Période disponible : {oldest_str} → {newest_str} ({duree:.1f} h)")
 
     if not df_live.empty:
-        flux_df = calculate_realtime_flux(df_live)
+        flux_df = calculate_realtime_flux(period_hours=period_hours)
         
         if not flux_df.empty:
             # Métriques de flux
@@ -440,10 +496,10 @@ with tab2:
                 }
             )
         else:
-            if 'data_history' in st.session_state and len(st.session_state.data_history) >= 2:
-                st.info("💤 Aucun mouvement détecté sur la dernière heure. Les stations n'ont pas changé de stock.")
+            if not st.session_state.historique_24h.empty:
+                st.info(f"💤 Aucun mouvement détecté sur la période de {selected_period.lower()}. Les stations n'ont pas changé de stock.")
             else:
-                st.info("⏳ Collecte des données en cours... Actualisez plusieurs fois pour accumuler un historique d'une heure.")
+                st.info("⏳ Collecte des données en cours... Veuillez patienter quelques instants.")
     else:
         st.warning("⚠️ Pas de données pour calculer les flux.")
 
