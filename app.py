@@ -103,6 +103,14 @@ def get_live_data():
             elec = min(elec, total) 
             classic = total - elec
             
+            # Calcul de la couleur pour la map (Rouge si vide, Orange si faible, Bleu EFREI sinon)
+            if total == 0:
+                color = '#FF0000' # Rouge (Vide)
+            elif total < 5:
+                color = '#FFA500' # Orange (Faible)
+            else:
+                color = '#005DAA' # Bleu EFREI (OK)
+
             processed_data.append({
                 'Station': s['name'],
                 'Total': total,
@@ -110,7 +118,9 @@ def get_live_data():
                 '🚲 Classiques': classic,
                 'Places': s['empty_slots'],
                 'lat': s['latitude'],
-                'lon': s['longitude']
+                'lon': s['longitude'],
+                'color': color,
+                'size': 20 if total > 0 else 10 # Plus petit si vide
             })
 
         return pd.DataFrame(processed_data)
@@ -184,6 +194,17 @@ def get_recent_logs(limit=50):
 
 # --- INTERFACE ---
 
+# Sidebar Filters
+with st.sidebar:
+    st.header("🔍 Filtres & Options")
+    if st.button("🔄 Actualiser les données", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    
+    st.markdown("---")
+    min_bikes = st.slider("Afficher stations avec au moins X vélos :", 0, 20, 0)
+    show_elec_only = st.checkbox("Seulement avec vélos électriques")
+
 # Logo EFREI
 col_logo, col_title = st.columns([1, 4])
 with col_logo:
@@ -197,44 +218,51 @@ tab1, tab2, tab3 = st.tabs(["📡 En Direct", "📊 Analyse & Historique", "📝
 
 # --- ONGLET 1 : LIVE ---
 with tab1:
-    if st.button("🔄 Actualiser les données"):
-        st.cache_data.clear()
-        st.rerun()
-
+    # Filtres appliqués sur les données live
     df_live = get_live_data()
     
     if not df_live.empty:
+        # Application des filtres Sidebar
+        df_filtered = df_live[df_live['Total'] >= min_bikes].copy()
+        if show_elec_only:
+            df_filtered = df_filtered[df_filtered['⚡ Électriques'] > 0]
+
         # Métriques Globales
+        total_bikes = df_live['Total'].sum()
+        total_slots = df_live['Places'].sum()
+        occupancy = (total_bikes / (total_bikes + total_slots) * 100) if (total_bikes + total_slots) > 0 else 0
+
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Stations actives", len(df_live))
-        c2.metric("Total Vélos", df_live['Total'].sum())
+        c1.metric("Stations actives", len(df_filtered))
+        c2.metric("Total Vélos", total_bikes)
         c3.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
-        c4.metric("Places vides", df_live['Places'].sum())
+        c4.metric("Taux de Remplissage", f"{occupancy:.1f}%")
 
         col_map, col_data = st.columns([3, 2])
         
         with col_map:
-            # Couleur Bleu EFREI pour la map
-            st.map(df_live, latitude='lat', longitude='lon', size=20, color='#005DAA')
+            # Map avec couleurs dynamiques
+            st.map(df_filtered, latitude='lat', longitude='lon', size='size', color='color')
+            st.caption(f"🔴 Vide | 🟠 < 5 vélos | 🔵 > 5 vélos")
 
         with col_data:
             search = st.text_input("🔎 Rechercher une station", placeholder="Ex: Victoire")
             
-            df_display = df_live.copy()
+            df_display = df_filtered.copy()
             if search:
                 df_display = df_display[df_display['Station'].str.contains(search, case=False)]
             
             # Affichage propre avec barres de progression pour le stock
             st.dataframe(
-                df_display[['Station', '⚡ Électriques', '🚲 Classiques', 'Places']],
+                df_display[['Station', 'Total', '⚡ Électriques', 'Places']],
                 hide_index=True,
                 use_container_width=True,
                 column_config={
-                    "⚡ Électriques": st.column_config.ProgressColumn(
-                        "⚡ Électriques", format="%d", min_value=0, max_value=30,
+                    "Total": st.column_config.ProgressColumn(
+                        "Total", format="%d", min_value=0, max_value=40,
                     ),
-                    "🚲 Classiques": st.column_config.NumberColumn(
-                        "🚲 Classiques", format="%d"
+                    "⚡ Électriques": st.column_config.NumberColumn(
+                        "⚡ Elec.", format="%d"
                     )
                 }
             )
@@ -281,25 +309,30 @@ with tab2:
                 
                 st.markdown("---")
                 
-                # Détail des 3 premières
-                st.subheader("zoom sur le Top 3")
-                cols_top = st.columns(3)
+                # Détail des 3 premières ou Comparaison
+                st.subheader("📈 Analyse détaillée")
                 
-                top_names = top.index.tolist()
+                # Multiselect pour comparer
+                stations_list = df_hist['station_name'].unique().tolist()
+                selected_stations = st.multiselect("Comparer l'évolution de :", stations_list, default=top_df['Station'].head(3).tolist())
                 
-                for i in range(min(3, len(top_names))):
-                    station_name = top_names[i]
-                    move_count = int(top[station_name])
+                if selected_stations:
+                    # Filtrer les données
+                    data_comp = df_hist[df_hist['station_name'].isin(selected_stations)].copy()
                     
-                    with cols_top[i]:
-                        st.markdown(f"### {i+1}. {station_name}")
-                        st.caption(f"{move_count} mouvements")
-                        
-                        # Filtrer les données pour cette station
-                        data_station = df_hist[df_hist['station_name'] == station_name].copy()
-                        data_station = data_station.set_index('timestamp').sort_index()
-                        
-                        st.line_chart(data_station['free_bikes'], color="#005DAA")
+                    # Graphique Altair Multiligne
+                    line_chart = alt.Chart(data_comp).mark_line().encode(
+                        x='timestamp:T',
+                        y='free_bikes:Q',
+                        color='station_name:N',
+                        tooltip=['timestamp', 'station_name', 'free_bikes']
+                    ).properties(
+                        height=400
+                    ).interactive()
+                    
+                    st.altair_chart(line_chart, use_container_width=True)
+                else:
+                    st.info("Sélectionnez des stations pour voir l'historique.")
             else:
                 st.info("Pas assez de mouvements détectés sur cette période.")
 
