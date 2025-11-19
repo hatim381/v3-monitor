@@ -46,8 +46,17 @@ def save_data():
     except Exception as e:
         print(f"Erreur : {e}")
 
+import sys
+
 if __name__ == "__main__":
     init_db()
+    
+    # Mode "One Shot" pour GitHub Actions (lance une fois et s'arrête)
+    if "--once" in sys.argv:
+        print("Mode ONE SHOT activé.")
+        save_data()
+        exit(0)
+
     print("L'enregistreur est lancé. Laissez cette fenêtre ouverte pour accumuler des données.")
     print("Appuyez sur Ctrl+C pour arrêter.")
     
