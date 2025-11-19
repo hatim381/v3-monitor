@@ -177,6 +177,13 @@ with st.sidebar:
     st.markdown("---")
     min_bikes = st.slider("Afficher stations avec au moins X vélos :", 0, 20, 0)
     show_elec_only = st.checkbox("Seulement avec vélos électriques")
+    
+    st.markdown("---")
+    st.markdown("### 📝 À propos")
+    st.caption("""
+    Application réalisée dans le cadre d'un projet en cours **API et Web Service**  
+    Développé par **Hatim Adnane**
+    """)
 
 # Logo EFREI
 col_logo, col_title = st.columns([1, 4])
@@ -311,3 +318,12 @@ with tab2:
                 st.success(f"✅ Référence capturée : {len(st.session_state.previous_data)} stations en mémoire.")
     else:
         st.warning("⚠️ Pas de données pour calculer les flux.")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #005DAA; padding: 20px;'>
+    <p><strong>Application réalisée dans le cadre d'un projet en cours API et Web Service</strong></p>
+    <p>Développé par <strong>Hatim Adnane</strong></p>
+</div>
+""", unsafe_allow_html=True)
