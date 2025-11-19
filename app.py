@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import altair as alt
+from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="V³ Monitor - EFREI Edition", page_icon="🚲", layout="wide", initial_sidebar_state="expanded")
@@ -130,36 +131,56 @@ def get_live_data():
         return pd.DataFrame()
 
 def calculate_realtime_flux(current_df):
-    """Calcule les mouvements (flux) par rapport à la dernière actualisation"""
-    if 'previous_data' not in st.session_state or st.session_state.previous_data.empty:
-        st.session_state.previous_data = current_df.copy()
-        return pd.DataFrame() # Pas de flux au premier chargement
-
-    prev_df = st.session_state.previous_data
+    """Calcule les mouvements cumulés sur la dernière heure"""
+    now = datetime.now()
     
-    # Fusionner pour comparer (sur le nom de la station)
-    merged = current_df.merge(prev_df, on='Station', suffixes=('_curr', '_prev'), how='outer')
+    # Initialiser l'historique si nécessaire
+    if 'data_history' not in st.session_state:
+        st.session_state.data_history = []
     
-    # Remplir les NaN pour les stations nouvelles ou disparues
+    # Ajouter les données actuelles avec timestamp
+    current_df_with_time = current_df.copy()
+    current_df_with_time['timestamp'] = now
+    st.session_state.data_history.append({
+        'timestamp': now,
+        'data': current_df_with_time
+    })
+    
+    # Filtrer pour garder seulement la dernière heure
+    one_hour_ago = now - timedelta(hours=1)
+    st.session_state.data_history = [
+        h for h in st.session_state.data_history 
+        if h['timestamp'] > one_hour_ago
+    ]
+    
+    if len(st.session_state.data_history) < 2:
+        return pd.DataFrame()  # Pas assez de données
+    
+    # Récupérer la première et dernière mesure de la dernière heure
+    first_data = st.session_state.data_history[0]['data'].copy()
+    last_data = st.session_state.data_history[-1]['data'].copy()
+    
+    # Fusionner pour comparer
+    merged = last_data.merge(first_data, on='Station', suffixes=('_curr', '_prev'), how='outer')
+    
+    # Remplir les NaN
     merged['Total_curr'] = merged['Total_curr'].fillna(0)
     merged['Total_prev'] = merged['Total_prev'].fillna(0)
     
-    # Calculer le delta (Mouvement absolu)
+    # Calculer le delta
     merged['Mouvement'] = (merged['Total_curr'] - merged['Total_prev']).abs()
     merged['Delta'] = merged['Total_curr'] - merged['Total_prev']
     
     # On ne garde que ceux qui ont bougé
     flux = merged[merged['Mouvement'] > 0].copy()
     
+    if flux.empty:
+        return pd.DataFrame()
+    
     # Ajouter une colonne pour indiquer si c'est une prise ou un dépôt
     flux['Type'] = flux['Delta'].apply(lambda x: '📤 Dépôt' if x > 0 else '📥 Prise')
     
-    # Mise à jour de l'état précédent pour la prochaine fois
-    st.session_state.previous_data = current_df.copy()
-    
-    if not flux.empty:
-        return flux[['Station', 'Type', 'Mouvement', 'Total_prev', 'Total_curr', 'Delta']].sort_values('Mouvement', ascending=False)
-    return pd.DataFrame()
+    return flux[['Station', 'Type', 'Mouvement', 'Total_prev', 'Total_curr', 'Delta']].sort_values('Mouvement', ascending=False)
 
 
 # --- INTERFACE ---
@@ -273,19 +294,28 @@ with tab1:
 
 # --- ONGLET 2 : FLUX TEMPS RÉEL ---
 with tab2:
-    st.header("⚡ Mouvements en Temps Réel")
-    st.info("💡 **Comment ça marche ?** Cliquez sur 'Actualiser' pour capturer un instantané. Les mouvements sont calculés entre deux actualisations.")
+    st.header("⚡ Mouvements de la Dernière Heure")
+    st.info("💡 **Comment ça marche ?** Les mouvements sont calculés automatiquement sur la dernière heure. Actualisez régulièrement pour accumuler les données.")
     
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
-        if st.button("🔄 Actualiser & Calculer Flux", use_container_width=True):
+        if st.button("🔄 Actualiser les données", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
     with col_btn2:
         if st.button("🗑️ Réinitialiser l'historique", use_container_width=True):
-            if 'previous_data' in st.session_state:
-                del st.session_state.previous_data
+            if 'data_history' in st.session_state:
+                del st.session_state.data_history
             st.rerun()
+    
+    # Afficher le nombre de mesures dans l'historique
+    if 'data_history' in st.session_state and len(st.session_state.data_history) > 0:
+        nb_mesures = len(st.session_state.data_history)
+        oldest = st.session_state.data_history[0]['timestamp']
+        newest = st.session_state.data_history[-1]['timestamp']
+        duree = (newest - oldest).total_seconds() / 60  # en minutes
+        
+        st.caption(f"📊 {nb_mesures} mesures collectées sur les dernières {duree:.0f} minutes")
 
     if not df_live.empty:
         flux_df = calculate_realtime_flux(df_live)
@@ -335,9 +365,10 @@ with tab2:
                 }
             )
         else:
-            st.info("💤 Aucun mouvement détecté depuis la dernière actualisation. Cliquez sur 'Actualiser' pour capturer un nouvel instantané et comparer.")
-            if 'previous_data' in st.session_state and not st.session_state.previous_data.empty:
-                st.success(f"✅ Référence capturée : {len(st.session_state.previous_data)} stations en mémoire.")
+            if 'data_history' in st.session_state and len(st.session_state.data_history) >= 2:
+                st.info("💤 Aucun mouvement détecté sur la dernière heure. Les stations n'ont pas changé de stock.")
+            else:
+                st.info("⏳ Collecte des données en cours... Actualisez plusieurs fois pour accumuler un historique d'une heure.")
     else:
         st.warning("⚠️ Pas de données pour calculer les flux.")
 
