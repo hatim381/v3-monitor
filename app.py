@@ -180,10 +180,32 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 📝 À propos")
-    st.caption("""
-    Application réalisée dans le cadre d'un projet en cours **API et Web Service**  
-    Développé par **Hatim Adnane**
-    """)
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #005DAA 0%, #5BC5F2 100%); 
+                padding: 15px; 
+                border-radius: 10px; 
+                color: white; 
+                margin: 10px 0;'>
+        <p style='margin: 0; font-size: 0.9em;'><strong>🎓 Projet académique</strong></p>
+        <p style='margin: 5px 0 0 0; font-size: 0.85em;'>API et Web Service</p>
+        <hr style='border: 1px solid rgba(255,255,255,0.3); margin: 10px 0;'>
+        <p style='margin: 0; font-size: 0.9em;'><strong>👨‍💻 Développeur</strong></p>
+        <p style='margin: 5px 0 0 0; font-size: 0.85em;'>Hatim Adnane</p>
+        <a href='https://hatimadnane.fr/' target='_blank' 
+           style='display: inline-block; 
+                  margin-top: 10px; 
+                  padding: 8px 15px; 
+                  background: white; 
+                  color: #005DAA; 
+                  text-decoration: none; 
+                  border-radius: 5px; 
+                  font-weight: bold; 
+                  font-size: 0.85em;
+                  transition: transform 0.2s;'>
+           🌐 Voir mon Portfolio
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Logo EFREI
 col_logo, col_title = st.columns([1, 4])
@@ -322,8 +344,38 @@ with tab2:
 # Footer
 st.markdown("---")
 st.markdown("""
-<div style='text-align: center; color: #005DAA; padding: 20px;'>
-    <p><strong>Application réalisée dans le cadre d'un projet en cours API et Web Service</strong></p>
-    <p>Développé par <strong>Hatim Adnane</strong></p>
+<div style='text-align: center; 
+            background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%); 
+            padding: 25px 20px; 
+            border-radius: 10px; 
+            margin-top: 30px;
+            box-shadow: 0 2px 10px rgba(0,93,170,0.1);'>
+    <div style='color: #005DAA; margin-bottom: 15px;'>
+        <p style='margin: 0; font-size: 1.1em; font-weight: bold;'>
+            🎓 Application réalisée dans le cadre d'un projet en cours
+        </p>
+        <p style='margin: 5px 0; font-size: 1em; color: #004a87;'>
+            <strong>API et Web Service</strong>
+        </p>
+    </div>
+    <div style='margin: 15px 0; padding: 15px; background: white; border-radius: 8px; border-left: 4px solid #005DAA;'>
+        <p style='margin: 0; font-size: 1em; color: #333;'>
+            👨‍💻 Développé par <strong style='color: #005DAA;'>Hatim Adnane</strong>
+        </p>
+        <a href='https://hatimadnane.fr/' target='_blank' 
+           style='display: inline-block; 
+                  margin-top: 10px; 
+                  padding: 10px 20px; 
+                  background: linear-gradient(135deg, #005DAA 0%, #5BC5F2 100%); 
+                  color: white; 
+                  text-decoration: none; 
+                  border-radius: 8px; 
+                  font-weight: bold; 
+                  font-size: 0.95em;
+                  transition: transform 0.2s;
+                  box-shadow: 0 4px 6px rgba(0,93,170,0.3);'>
+           🌐 Découvrir mon Portfolio
+        </a>
+    </div>
 </div>
 """, unsafe_allow_html=True)
