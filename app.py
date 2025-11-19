@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import sqlite3
 import os
+import altair as alt
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
@@ -260,12 +261,23 @@ with tab2:
                 df_hist, top = get_history_stats(hours)
             
             if top is not None and not top.empty:
-                # Graphique principal avec couleur EFREI
-                st.subheader(f"Top 10 des stations (Mouvements cumulés)")
-                st.bar_chart(top, color="#005DAA")
+                # Préparation des données pour le graphique (DataFrame)
+                top_df = top.reset_index()
+                top_df.columns = ['Station', 'Mouvements']
+                
+                # Graphique Altair pour forcer l'ordre croissant
+                chart = alt.Chart(top_df).mark_bar(color="#005DAA").encode(
+                    x=alt.X('Station', sort='y'), # Trie par l'axe Y (Mouvements) croissant
+                    y='Mouvements',
+                    tooltip=['Station', 'Mouvements']
+                ).properties(
+                    title="Top 10 des stations (Mouvements cumulés)"
+                )
+                
+                st.altair_chart(chart, use_container_width=True)
 
-                # Afficher le tableau des données
-                st.dataframe(top, use_container_width=True)
+                # Afficher le tableau des données (trié aussi)
+                st.dataframe(top.sort_values(ascending=True), use_container_width=True)
                 
                 st.markdown("---")
                 
