@@ -164,7 +164,7 @@ def calculate_realtime_flux(current_df):
 
 # --- INTERFACE ---
 
-st.title("🚲 V³ Bordeaux - Monitor")
+
 st.markdown("Dashboard temps réel via l'API officielle Bordeaux Métropole.")
 
 # Sidebar Filters
