@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.ipynb_checkpoints
+.env
+venv/
+.vscode/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Database
+*.db
+
