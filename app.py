@@ -1,10 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
-import sqlite3
-import os
 import altair as alt
-from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="V³ Monitor - EFREI Edition", page_icon="🚲", layout="wide", initial_sidebar_state="expanded")
@@ -132,69 +129,38 @@ def get_live_data():
         st.error(f"Erreur API TBM : {e}")
         return pd.DataFrame()
 
-def get_history_stats(hours_lookback=24):
-    """Lit la DB pour calculer les mouvements sur les X dernières heures"""
-    if not os.path.exists(DB_NAME):
-        return None, None
+def calculate_realtime_flux(current_df):
+    """Calcule les mouvements (flux) par rapport à la dernière actualisation"""
+    if 'previous_data' not in st.session_state or st.session_state.previous_data.empty:
+        st.session_state.previous_data = current_df.copy()
+        return pd.DataFrame() # Pas de flux au premier chargement
 
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        
-        # On filtre pour ne pas charger 1 an de données d'un coup
-        time_threshold = (datetime.now() - timedelta(hours=hours_lookback)).strftime("%Y-%m-%d %H:%M:%S")
-        
-        query = f"""
-            SELECT timestamp, station_name, free_bikes 
-            FROM stations_history 
-            WHERE timestamp > '{time_threshold}'
-        """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        
-        if df.empty:
-            return pd.DataFrame(), pd.Series()
-
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        
-        # --- ALGORITHME DE MOUVEMENT ---
-        # Trie par station puis par temps
-        df_sorted = df.sort_values(['station_name', 'timestamp'])
-        
-        # Calcule la différence absolue avec la ligne précédente pour chaque station
-        # Ex: 10h00 (12 vélos) -> 10h05 (10 vélos) = Mouvement de 2
-        df_sorted['mouvement'] = df_sorted.groupby('station_name')['free_bikes'].diff().abs()
-        
-        # On remplit les NaN (première ligne de chaque station) par 0
-        df_sorted['mouvement'] = df_sorted['mouvement'].fillna(0)
-
-        # Total des mouvements par station
-        top_stations = df_sorted.groupby('station_name')['mouvement'].sum().sort_values(ascending=False).head(10)
-        
-        return df_sorted, top_stations
-
-    except Exception as e:
-        st.error(f"Erreur SQL : {e}")
-        return None, None
-
-def get_recent_logs(limit=50):
-    """Récupère les derniers logs bruts de la DB"""
-    if not os.path.exists(DB_NAME):
-        return pd.DataFrame()
+    prev_df = st.session_state.previous_data
     
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        query = f"""
-            SELECT timestamp, station_name, free_bikes, empty_slots 
-            FROM stations_history 
-            ORDER BY timestamp DESC 
-            LIMIT {limit}
-        """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception as e:
-        st.error(f"Erreur SQL Logs : {e}")
-        return pd.DataFrame()
+    # Fusionner pour comparer (sur le nom de la station)
+    merged = current_df.merge(prev_df, on='Station', suffixes=('_curr', '_prev'), how='outer')
+    
+    # Remplir les NaN pour les stations nouvelles ou disparues
+    merged['Total_curr'] = merged['Total_curr'].fillna(0)
+    merged['Total_prev'] = merged['Total_prev'].fillna(0)
+    
+    # Calculer le delta (Mouvement absolu)
+    merged['Mouvement'] = (merged['Total_curr'] - merged['Total_prev']).abs()
+    merged['Delta'] = merged['Total_curr'] - merged['Total_prev']
+    
+    # On ne garde que ceux qui ont bougé
+    flux = merged[merged['Mouvement'] > 0].copy()
+    
+    # Ajouter une colonne pour indiquer si c'est une prise ou un dépôt
+    flux['Type'] = flux['Delta'].apply(lambda x: '📤 Dépôt' if x > 0 else '📥 Prise')
+    
+    # Mise à jour de l'état précédent pour la prochaine fois
+    st.session_state.previous_data = current_df.copy()
+    
+    if not flux.empty:
+        return flux[['Station', 'Type', 'Mouvement', 'Total_prev', 'Total_curr', 'Delta']].sort_values('Mouvement', ascending=False)
+    return pd.DataFrame()
+
 
 # --- INTERFACE ---
 
@@ -221,53 +187,127 @@ with col_title:
 
 st.markdown("Dashboard temps réel via l'API officielle Bordeaux Métropole.")
 
-# --- LIVE ONLY (No History in this version) ---
+tab1, tab2 = st.tabs(["📡 En Direct", "⚡ Flux Temps Réel"])
+
+# --- LIVE DATA FETCHING ---
 df_live = get_live_data()
 
-if not df_live.empty:
-    # Application des filtres Sidebar
-    df_filtered = df_live[df_live['Total'] >= min_bikes].copy()
-    if show_elec_only:
-        df_filtered = df_filtered[df_filtered['⚡ Électriques'] > 0]
+# --- ONGLET 1 : LIVE ---
+with tab1:
+    if not df_live.empty:
+        # Application des filtres Sidebar
+        df_filtered = df_live[df_live['Total'] >= min_bikes].copy()
+        if show_elec_only:
+            df_filtered = df_filtered[df_filtered['⚡ Électriques'] > 0]
 
-    # Métriques Globales
-    total_bikes = df_live['Total'].sum()
-    total_slots = df_live['Places'].sum()
-    occupancy = (total_bikes / (total_bikes + total_slots) * 100) if (total_bikes + total_slots) > 0 else 0
+        # Métriques Globales
+        total_bikes = df_live['Total'].sum()
+        total_slots = df_live['Places'].sum()
+        occupancy = (total_bikes / (total_bikes + total_slots) * 100) if (total_bikes + total_slots) > 0 else 0
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Stations actives", len(df_filtered))
-    c2.metric("Total Vélos", total_bikes)
-    c3.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
-    c4.metric("Taux de Remplissage", f"{occupancy:.1f}%")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Stations actives", len(df_filtered))
+        c2.metric("Total Vélos", total_bikes)
+        c3.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
+        c4.metric("Taux de Remplissage", f"{occupancy:.1f}%")
 
-    col_map, col_data = st.columns([3, 2])
+        col_map, col_data = st.columns([3, 2])
+        
+        with col_map:
+            # Map avec couleurs dynamiques
+            st.map(df_filtered, latitude='lat', longitude='lon', size='size', color='color')
+            st.caption(f"🔴 Vide | 🟠 < 5 vélos | 🔵 > 5 vélos")
+
+        with col_data:
+            search = st.text_input("🔎 Rechercher une station", placeholder="Ex: Victoire")
+            
+            df_display = df_filtered.copy()
+            if search:
+                df_display = df_display[df_display['Station'].str.contains(search, case=False)]
+            
+            # Affichage propre avec barres de progression pour le stock
+            st.dataframe(
+                df_display[['Station', 'Total', '⚡ Électriques', 'Places']],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Total": st.column_config.ProgressColumn(
+                        "Total", format="%d", min_value=0, max_value=40,
+                    ),
+                    "⚡ Électriques": st.column_config.NumberColumn(
+                        "⚡ Elec.", format="%d"
+                    )
+                }
+            )
+    else:
+        st.warning("Impossible de récupérer les données API.")
+
+# --- ONGLET 2 : FLUX TEMPS RÉEL ---
+with tab2:
+    st.header("⚡ Mouvements en Temps Réel")
+    st.info("💡 **Comment ça marche ?** Cliquez sur 'Actualiser' pour capturer un instantané. Les mouvements sont calculés entre deux actualisations.")
     
-    with col_map:
-        # Map avec couleurs dynamiques
-        st.map(df_filtered, latitude='lat', longitude='lon', size='size', color='color')
-        st.caption(f"🔴 Vide | 🟠 < 5 vélos | 🔵 > 5 vélos")
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("🔄 Actualiser & Calculer Flux", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+    with col_btn2:
+        if st.button("🗑️ Réinitialiser l'historique", use_container_width=True):
+            if 'previous_data' in st.session_state:
+                del st.session_state.previous_data
+            st.rerun()
 
-    with col_data:
-        search = st.text_input("🔎 Rechercher une station", placeholder="Ex: Victoire")
+    if not df_live.empty:
+        flux_df = calculate_realtime_flux(df_live)
         
-        df_display = df_filtered.copy()
-        if search:
-            df_display = df_display[df_display['Station'].str.contains(search, case=False)]
-        
-        # Affichage propre avec barres de progression pour le stock
-        st.dataframe(
-            df_display[['Station', 'Total', '⚡ Électriques', 'Places']],
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "Total": st.column_config.ProgressColumn(
-                    "Total", format="%d", min_value=0, max_value=40,
-                ),
-                "⚡ Électriques": st.column_config.NumberColumn(
-                    "⚡ Elec.", format="%d"
-                )
-            }
-        )
-else:
-    st.warning("Impossible de récupérer les données API.")
+        if not flux_df.empty:
+            # Métriques de flux
+            total_mouvements = flux_df['Mouvement'].sum()
+            stations_bouge = len(flux_df)
+            depots = len(flux_df[flux_df['Type'] == '📤 Dépôt'])
+            prises = len(flux_df[flux_df['Type'] == '📥 Prise'])
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Mouvements totaux", total_mouvements)
+            c2.metric("Stations impactées", stations_bouge)
+            c3.metric("📤 Dépôts", depots)
+            c4.metric("📥 Prises", prises)
+            
+            st.markdown("---")
+            st.subheader("📊 Détail des mouvements")
+            
+            # Graphique des mouvements
+            chart_data = flux_df.head(20).copy()  # Top 20
+            chart = alt.Chart(chart_data).mark_bar(color="#005DAA").encode(
+                x=alt.X('Station', sort='-y'),
+                y='Mouvement',
+                tooltip=['Station', 'Type', 'Mouvement', 'Total_prev', 'Total_curr']
+            ).properties(
+                height=400,
+                title="Top 20 des stations avec mouvements"
+            )
+            st.altair_chart(chart, use_container_width=True)
+            
+            # Tableau détaillé
+            st.dataframe(
+                flux_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Station": "Station",
+                    "Type": "Type",
+                    "Mouvement": st.column_config.ProgressColumn(
+                        "Ampleur", format="%d", min_value=0, max_value=20,
+                    ),
+                    "Total_prev": st.column_config.NumberColumn("Avant", format="%d"),
+                    "Total_curr": st.column_config.NumberColumn("Maintenant", format="%d"),
+                    "Delta": st.column_config.NumberColumn("Δ", format="%+d")
+                }
+            )
+        else:
+            st.info("💤 Aucun mouvement détecté depuis la dernière actualisation. Cliquez sur 'Actualiser' pour capturer un nouvel instantané et comparer.")
+            if 'previous_data' in st.session_state and not st.session_state.previous_data.empty:
+                st.success(f"✅ Référence capturée : {len(st.session_state.previous_data)} stations en mémoire.")
+    else:
+        st.warning("⚠️ Pas de données pour calculer les flux.")
