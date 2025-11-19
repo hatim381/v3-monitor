@@ -77,33 +77,35 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-DB_NAME = os.getenv("DB_PATH", "bordeaux.db")
-API_URL = "https://api.citybik.es/v2/networks/v3-bordeaux"
+API_KEY = "PWX0HJQMSI"
+API_URL = f"https://data.bordeaux-metropole.fr/geojson?key={API_KEY}&typename=ci_vcub_p"
 
 # --- FONCTIONS ---
 
 @st.cache_data(ttl=60)
 def get_live_data():
-    """Récupère les données en direct et sépare Électrique/Classique"""
+    """Récupère les données en direct via l'API Bordeaux Métropole"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(API_URL, headers=headers)
+        response = requests.get(API_URL)
         response.raise_for_status()
         data = response.json()
         
-        stations = data['network']['stations']
+        stations = data['features']
         processed_data = []
 
         for s in stations:
-            # Extraction sécurisée des données
-            total = s['free_bikes']
-            extra = s.get('extra', {})
-            elec = extra.get('ebikes', 0)
-            # Sécurité : parfois l'API renvoie plus d'élec que de total (bug rare), on corrige
-            elec = min(elec, total) 
-            classic = total - elec
+            props = s['properties']
+            geometry = s['geometry']['coordinates']
             
-            # Calcul de la couleur pour la map (Rouge si vide, Orange si faible, Bleu EFREI sinon)
+            # Extraction des données (clés minuscules selon l'API TBM)
+            nom = props.get('nom', 'Inconnue')
+            total = int(props.get('nbvelos', 0))
+            elec = int(props.get('nbelec', 0))
+            classic = int(props.get('nbclassiq', 0))
+            places = int(props.get('nbplaces', 0))
+            etat = props.get('etat', 'DECONNECTEE')
+            
+            # Calcul de la couleur pour la map
             if total == 0:
                 color = '#FF0000' # Rouge (Vide)
             elif total < 5:
@@ -111,21 +113,23 @@ def get_live_data():
             else:
                 color = '#005DAA' # Bleu EFREI (OK)
 
-            processed_data.append({
-                'Station': s['name'],
-                'Total': total,
-                '⚡ Électriques': elec,
-                '🚲 Classiques': classic,
-                'Places': s['empty_slots'],
-                'lat': s['latitude'],
-                'lon': s['longitude'],
-                'color': color,
-                'size': 20 if total > 0 else 10 # Plus petit si vide
-            })
+            # On ne garde que les stations connectées ou avec des données
+            if etat == 'CONNECTEE' or total > 0 or places > 0:
+                processed_data.append({
+                    'Station': nom,
+                    'Total': total,
+                    '⚡ Électriques': elec,
+                    '🚲 Classiques': classic,
+                    'Places': places,
+                    'lat': geometry[1],
+                    'lon': geometry[0],
+                    'color': color,
+                    'size': 20 if total > 0 else 10
+                })
 
         return pd.DataFrame(processed_data)
     except Exception as e:
-        st.error(f"Erreur API : {e}")
+        st.error(f"Erreur API TBM : {e}")
         return pd.DataFrame()
 
 def get_history_stats(hours_lookback=24):
@@ -194,6 +198,9 @@ def get_recent_logs(limit=50):
 
 # --- INTERFACE ---
 
+st.title("🚲 V³ Bordeaux - Monitor")
+st.markdown("Dashboard temps réel via l'API officielle Bordeaux Métropole.")
+
 # Sidebar Filters
 with st.sidebar:
     st.header("🔍 Filtres & Options")
@@ -212,149 +219,55 @@ with col_logo:
 with col_title:
     st.title("🚲 V³ Bordeaux - Monitor")
 
-st.markdown("Dashboard temps réel & historique pour le réseau TBM.")
+st.markdown("Dashboard temps réel via l'API officielle Bordeaux Métropole.")
 
-tab1, tab2, tab3 = st.tabs(["📡 En Direct", "📊 Analyse & Historique", "📝 Logs Temps Réel"])
+# --- LIVE ONLY (No History in this version) ---
+df_live = get_live_data()
 
-# --- ONGLET 1 : LIVE ---
-with tab1:
-    # Filtres appliqués sur les données live
-    df_live = get_live_data()
+if not df_live.empty:
+    # Application des filtres Sidebar
+    df_filtered = df_live[df_live['Total'] >= min_bikes].copy()
+    if show_elec_only:
+        df_filtered = df_filtered[df_filtered['⚡ Électriques'] > 0]
+
+    # Métriques Globales
+    total_bikes = df_live['Total'].sum()
+    total_slots = df_live['Places'].sum()
+    occupancy = (total_bikes / (total_bikes + total_slots) * 100) if (total_bikes + total_slots) > 0 else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Stations actives", len(df_filtered))
+    c2.metric("Total Vélos", total_bikes)
+    c3.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
+    c4.metric("Taux de Remplissage", f"{occupancy:.1f}%")
+
+    col_map, col_data = st.columns([3, 2])
     
-    if not df_live.empty:
-        # Application des filtres Sidebar
-        df_filtered = df_live[df_live['Total'] >= min_bikes].copy()
-        if show_elec_only:
-            df_filtered = df_filtered[df_filtered['⚡ Électriques'] > 0]
+    with col_map:
+        # Map avec couleurs dynamiques
+        st.map(df_filtered, latitude='lat', longitude='lon', size='size', color='color')
+        st.caption(f"🔴 Vide | 🟠 < 5 vélos | 🔵 > 5 vélos")
 
-        # Métriques Globales
-        total_bikes = df_live['Total'].sum()
-        total_slots = df_live['Places'].sum()
-        occupancy = (total_bikes / (total_bikes + total_slots) * 100) if (total_bikes + total_slots) > 0 else 0
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Stations actives", len(df_filtered))
-        c2.metric("Total Vélos", total_bikes)
-        c3.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
-        c4.metric("Taux de Remplissage", f"{occupancy:.1f}%")
-
-        col_map, col_data = st.columns([3, 2])
+    with col_data:
+        search = st.text_input("🔎 Rechercher une station", placeholder="Ex: Victoire")
         
-        with col_map:
-            # Map avec couleurs dynamiques
-            st.map(df_filtered, latitude='lat', longitude='lon', size='size', color='color')
-            st.caption(f"🔴 Vide | 🟠 < 5 vélos | 🔵 > 5 vélos")
-
-        with col_data:
-            search = st.text_input("🔎 Rechercher une station", placeholder="Ex: Victoire")
-            
-            df_display = df_filtered.copy()
-            if search:
-                df_display = df_display[df_display['Station'].str.contains(search, case=False)]
-            
-            # Affichage propre avec barres de progression pour le stock
-            st.dataframe(
-                df_display[['Station', 'Total', '⚡ Électriques', 'Places']],
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "Total": st.column_config.ProgressColumn(
-                        "Total", format="%d", min_value=0, max_value=40,
-                    ),
-                    "⚡ Électriques": st.column_config.NumberColumn(
-                        "⚡ Elec.", format="%d"
-                    )
-                }
-            )
-    else:
-        st.warning("Impossible de récupérer les données API.")
-
-# --- ONGLET 2 : HISTORIQUE ---
-with tab2:
-    st.header("🏆 Most Active Stations")
-    
-    if not os.path.exists(DB_NAME):
-        st.warning("⚠️ Aucune base de données trouvée (`bordeaux.db`).")
-        st.info("👉 Lancez le script `enregistreur.py` dans un terminal séparé pour commencer à collecter des données.")
-    else:
-        col_filter, col_btn = st.columns([3, 1])
-        with col_filter:
-            hours = st.slider("Analyser les dernières :", 1, 48, 24, format="%d heures")
-        with col_btn:
-            st.write("") # Spacer
-            refresh_hist = st.button("Calculer Stats")
-
-        if refresh_hist:
-            with st.spinner("Analyse des flux..."):
-                df_hist, top = get_history_stats(hours)
-            
-            if top is not None and not top.empty:
-                # Préparation des données pour le graphique (DataFrame)
-                top_df = top.reset_index()
-                top_df.columns = ['Station', 'Mouvements']
-                
-                # Graphique Altair pour forcer l'ordre croissant
-                chart = alt.Chart(top_df).mark_bar(color="#005DAA").encode(
-                    x=alt.X('Station', sort='y'), # Trie par l'axe Y (Mouvements) croissant
-                    y='Mouvements',
-                    tooltip=['Station', 'Mouvements']
-                ).properties(
-                    title="Top 10 des stations (Mouvements cumulés)"
-                )
-                
-                st.altair_chart(chart, use_container_width=True)
-
-                # Afficher le tableau des données (trié aussi)
-                st.dataframe(top.sort_values(ascending=True), use_container_width=True)
-                
-                st.markdown("---")
-                
-                # Détail des 3 premières ou Comparaison
-                st.subheader("📈 Analyse détaillée")
-                
-                # Multiselect pour comparer
-                stations_list = df_hist['station_name'].unique().tolist()
-                selected_stations = st.multiselect("Comparer l'évolution de :", stations_list, default=top_df['Station'].head(3).tolist())
-                
-                if selected_stations:
-                    # Filtrer les données
-                    data_comp = df_hist[df_hist['station_name'].isin(selected_stations)].copy()
-                    
-                    # Graphique Altair Multiligne
-                    line_chart = alt.Chart(data_comp).mark_line().encode(
-                        x='timestamp:T',
-                        y='free_bikes:Q',
-                        color='station_name:N',
-                        tooltip=['timestamp', 'station_name', 'free_bikes']
-                    ).properties(
-                        height=400
-                    ).interactive()
-                    
-                    st.altair_chart(line_chart, use_container_width=True)
-                else:
-                    st.info("Sélectionnez des stations pour voir l'historique.")
-            else:
-                st.info("Pas assez de mouvements détectés sur cette période.")
-
-# --- ONGLET 3 : LOGS ---
-with tab3:
-    st.header("📝 Derniers enregistrements (Logs)")
-    
-    if st.button("🔄 Actualiser les logs"):
-        st.rerun()
+        df_display = df_filtered.copy()
+        if search:
+            df_display = df_display[df_display['Station'].str.contains(search, case=False)]
         
-    df_logs = get_recent_logs(100)
-    
-    if not df_logs.empty:
+        # Affichage propre avec barres de progression pour le stock
         st.dataframe(
-            df_logs, 
+            df_display[['Station', 'Total', '⚡ Électriques', 'Places']],
+            hide_index=True,
             use_container_width=True,
             column_config={
-                "timestamp": st.column_config.DatetimeColumn("Horodatage", format="DD/MM/YYYY HH:mm:ss"),
-                "station_name": "Station",
-                "free_bikes": st.column_config.NumberColumn("Vélos Dispos"),
-                "empty_slots": st.column_config.NumberColumn("Places Vides")
+                "Total": st.column_config.ProgressColumn(
+                    "Total", format="%d", min_value=0, max_value=40,
+                ),
+                "⚡ Électriques": st.column_config.NumberColumn(
+                    "⚡ Elec.", format="%d"
+                )
             }
         )
-    else:
-        st.info("Aucun log disponible. Assurez-vous que l'enregistreur tourne.")
+else:
+    st.warning("Impossible de récupérer les données API.")
