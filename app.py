@@ -242,7 +242,7 @@ with tab1:
 
 # --- ONGLET 2 : HISTORIQUE ---
 with tab2:
-    st.header("🏆 Stations les plus dynamiques")
+    st.header("🏆 Most Active Stations")
     
     if not os.path.exists(DB_NAME):
         st.warning("⚠️ Aucune base de données trouvée (`bordeaux.db`).")
@@ -263,6 +263,9 @@ with tab2:
                 # Graphique principal avec couleur EFREI
                 st.subheader(f"Top 10 des stations (Mouvements cumulés)")
                 st.bar_chart(top, color="#005DAA")
+
+                # Afficher le tableau des données
+                st.dataframe(top, use_container_width=True)
                 
                 st.markdown("---")
                 
