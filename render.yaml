@@ -1,0 +1,29 @@
+services:
+  # 1. L'application Web (Streamlit Dashboard)
+  - type: web
+    name: v3-monitor-dashboard
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    disk:
+      name: bordeaux-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/bordeaux.db
+
+  # 2. L'enregistreur (Background Worker)
+  - type: worker
+    name: v3-monitor-recorder
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python enregistreur.py
+    disk:
+      name: bordeaux-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/bordeaux.db
+

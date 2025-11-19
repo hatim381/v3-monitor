@@ -76,7 +76,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-DB_NAME = "bordeaux.db"
+DB_NAME = os.getenv("DB_PATH", "bordeaux.db")
 API_URL = "https://api.citybik.es/v2/networks/v3-bordeaux"
 
 # --- FONCTIONS ---

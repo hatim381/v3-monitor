@@ -5,7 +5,7 @@ from datetime import datetime
 import os
 
 # Configuration
-DB_NAME = "bordeaux.db"
+DB_NAME = os.getenv("DB_PATH", "bordeaux.db")
 API_URL = "https://api.citybik.es/v2/networks/v3-bordeaux"
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 INTERVALLE = 60  # Enregistrer toutes les 60 secondes
