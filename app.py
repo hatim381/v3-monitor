@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 import requests
 import pandas as pd
 import altair as alt
@@ -142,7 +143,7 @@ def calculate_realtime_flux(current_df):
     """Calcule les mouvements cumulés sur la dernière heure"""
     now = get_paris_time()
     
-    # Initialiser l'historique si nécessaire
+    # Initialiser l'historique si nécessaire (robustesse)
     if 'data_history' not in st.session_state:
         st.session_state.data_history = []
     
@@ -193,8 +194,23 @@ def calculate_realtime_flux(current_df):
 
 # --- INTERFACE ---
 
+# Initialisation robuste de session_state (au début pour éviter les pertes de données)
+if 'data_history' not in st.session_state:
+    st.session_state.data_history = []
+
+if 'previous_metrics' not in st.session_state:
+    st.session_state.previous_metrics = {
+        'total_bikes': None,
+        'occupancy': None
+    }
+
+if 'confirm_reset' not in st.session_state:
+    st.session_state.confirm_reset = False
 
 st.markdown("Dashboard temps réel via l'API officielle Bordeaux Métropole.")
+
+# Auto-refresh toutes les 60 secondes
+st_autorefresh(interval=60 * 1000, key="data_refresh")
 
 # Sidebar Filters
 with st.sidebar:
@@ -265,18 +281,37 @@ with tab1:
         total_slots = df_live['Places'].sum()
         occupancy = (total_bikes / (total_bikes + total_slots) * 100) if (total_bikes + total_slots) > 0 else 0
 
+        # Calculer les deltas pour les métriques
+        prev_total_bikes = st.session_state.previous_metrics.get('total_bikes')
+        prev_occupancy = st.session_state.previous_metrics.get('occupancy')
+        
+        delta_bikes = None if prev_total_bikes is None else total_bikes - prev_total_bikes
+        delta_occupancy = None if prev_occupancy is None else round(occupancy - prev_occupancy, 1)
+        
+        # Mettre à jour les métriques précédentes
+        st.session_state.previous_metrics['total_bikes'] = total_bikes
+        st.session_state.previous_metrics['occupancy'] = occupancy
+        
+        # Code couleur pour le taux de remplissage
+        if occupancy >= 50:
+            occupancy_color = "🟢"  # Vert
+        elif occupancy >= 20:
+            occupancy_color = "🟠"  # Orange
+        else:
+            occupancy_color = "🔴"  # Rouge
+
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Stations actives", len(df_filtered))
-        c2.metric("Total Vélos", total_bikes)
+        c2.metric("Total Vélos", total_bikes, delta=delta_bikes if delta_bikes is not None else None)
         c3.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
-        c4.metric("Taux de Remplissage", f"{occupancy:.1f}%")
+        c4.metric("Taux de Remplissage", f"{occupancy_color} {occupancy:.1f}%", delta=f"{delta_occupancy:+.1f}%" if delta_occupancy is not None else None)
 
         col_map, col_data = st.columns([3, 2])
         
         with col_map:
             # Map avec couleurs dynamiques
             st.map(df_filtered, latitude='lat', longitude='lon', size='size', color='color')
-            st.caption(f"🔴 Vide | 🟠 < 5 vélos | 🔵 > 5 vélos")
+            st.caption("🔴 Vide | 🟠 < 5 vélos | 🔵 > 5 vélos")
 
         with col_data:
             search = st.text_input("🔎 Rechercher une station", placeholder="Ex: Victoire")
@@ -313,10 +348,30 @@ with tab2:
             st.cache_data.clear()
             st.rerun()
     with col_btn2:
-        if st.button("🗑️ Réinitialiser l'historique", use_container_width=True):
-            if 'data_history' in st.session_state:
-                del st.session_state.data_history
-            st.rerun()
+        # Bouton de réinitialisation moins visible avec avertissement
+        if st.button("🗑️ Réinitialiser l'historique", use_container_width=True, type="secondary"):
+            st.session_state.confirm_reset = True
+        
+        # Afficher l'avertissement et le bouton de confirmation si nécessaire
+        if st.session_state.confirm_reset:
+            st.warning("⚠️ **Attention** : Cette action va supprimer tout l'historique des données. Êtes-vous sûr ?")
+            col_confirm, col_cancel = st.columns(2)
+            with col_confirm:
+                if st.button("✅ Confirmer", use_container_width=True, type="primary"):
+                    if 'data_history' in st.session_state:
+                        del st.session_state.data_history
+                    if 'previous_metrics' in st.session_state:
+                        st.session_state.previous_metrics = {
+                            'total_bikes': None,
+                            'occupancy': None
+                        }
+                    st.session_state.confirm_reset = False
+                    st.success("✅ Historique réinitialisé avec succès")
+                    st.rerun()
+            with col_cancel:
+                if st.button("❌ Annuler", use_container_width=True):
+                    st.session_state.confirm_reset = False
+                    st.rerun()
     
     # Afficher l'heure actuelle et les infos de l'historique
     current_time = get_paris_time().strftime("%H:%M:%S - %d/%m/%Y")
@@ -365,19 +420,22 @@ with tab2:
             )
             st.altair_chart(chart, use_container_width=True)
             
-            # Tableau détaillé
+            # Tableau détaillé avec colonnes renommées
+            flux_display = flux_df.copy()
+            flux_display = flux_display.rename(columns={'Total_prev': 'Stock Initial'})
+            
             st.dataframe(
-                flux_df,
+                flux_display,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Station": "Station",
-                    "Type": "Type",
+                    "Station": st.column_config.TextColumn("Station", width="medium"),
+                    "Type": st.column_config.TextColumn("Type", width="small"),
                     "Mouvement": st.column_config.ProgressColumn(
                         "Ampleur", format="%d", min_value=0, max_value=20,
                     ),
-                    "Total_prev": st.column_config.NumberColumn("Avant", format="%d"),
-                    "Total_curr": st.column_config.NumberColumn("Maintenant", format="%d"),
+                    "Stock Initial": st.column_config.NumberColumn("Stock Initial", format="%d"),
+                    "Total_curr": st.column_config.NumberColumn("Stock Actuel", format="%d"),
                     "Delta": st.column_config.NumberColumn("Δ", format="%+d")
                 }
             )
