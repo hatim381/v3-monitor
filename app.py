@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pytz
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="V³ Monitor - EFREI Edition", page_icon="🚲", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="V³ Monitor - EFREI Edition", page_icon="🚲", layout="wide", initial_sidebar_state="collapsed")
 
 # Fuseau horaire Paris
 PARIS_TZ = pytz.timezone('Europe/Paris')
@@ -80,6 +80,102 @@ st.markdown("""
     }
     .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
         border-bottom-color: #005DAA;
+    }
+    
+    /* Responsive Design pour Mobile */
+    @media screen and (max-width: 768px) {
+        /* Réduire les espacements */
+        .main .block-container {
+            padding: 1rem 1rem;
+        }
+        
+        /* Ajuster les titres */
+        h1 {
+            font-size: 1.5rem !important;
+        }
+        h2 {
+            font-size: 1.2rem !important;
+        }
+        h3 {
+            font-size: 1rem !important;
+        }
+        
+        /* Ajuster les métriques */
+        .stMetric {
+            padding: 0.5rem 0;
+        }
+        
+        /* Ajuster les tableaux pour le scroll horizontal */
+        .stDataFrame {
+            overflow-x: auto;
+        }
+        
+        /* Réduire la taille des boutons */
+        .stButton button {
+            font-size: 0.9rem;
+            padding: 0.4rem 0.8rem;
+        }
+        
+        /* Ajuster la sidebar */
+        [data-testid="stSidebar"] {
+            min-width: 200px;
+        }
+        
+        /* Ajuster les colonnes de métriques */
+        [data-testid="column"] {
+            padding: 0.25rem;
+        }
+        
+        /* Ajuster les graphiques */
+        .vega-embed {
+            width: 100% !important;
+        }
+        
+        /* Ajuster les onglets */
+        .stTabs [data-baseweb="tab-list"] {
+            flex-wrap: wrap;
+        }
+        
+        .stTabs [data-baseweb="tab-list"] button {
+            font-size: 0.85rem;
+            padding: 0.5rem 0.75rem;
+        }
+    }
+    
+    /* Très petits écrans (smartphones) */
+    @media screen and (max-width: 480px) {
+        .main .block-container {
+            padding: 0.5rem 0.5rem;
+        }
+        
+        h1 {
+            font-size: 1.2rem !important;
+        }
+        h2 {
+            font-size: 1rem !important;
+        }
+        
+        .stMetric {
+            padding: 0.25rem 0;
+        }
+        
+        .stMetric label {
+            font-size: 0.75rem !important;
+        }
+        
+        .stMetric [data-testid="stMetricValue"] {
+            font-size: 1.2rem !important;
+        }
+        
+        .stButton button {
+            font-size: 0.8rem;
+            padding: 0.3rem 0.6rem;
+        }
+        
+        /* Cacher la sidebar par défaut sur très petits écrans */
+        [data-testid="stSidebar"] {
+            min-width: 180px;
+        }
     }
     </style>
 """, unsafe_allow_html=True)
@@ -331,13 +427,21 @@ with tab1:
         else:
             occupancy_color = "🔴"  # Rouge
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Stations actives", len(df_filtered))
-        c2.metric("Total Vélos", total_bikes, delta=delta_bikes if delta_bikes is not None else None)
-        c3.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
-        c4.metric("Taux de Remplissage", f"{occupancy_color} {occupancy:.1f}%", delta=f"{delta_occupancy:+.1f}%" if delta_occupancy is not None else None)
+        # Métriques en grille responsive (2x2 sur mobile, 4 colonnes sur desktop)
+        c1, c2 = st.columns(2)
+        c3, c4 = st.columns(2)
+        
+        with c1:
+            st.metric("Stations actives", len(df_filtered))
+        with c2:
+            st.metric("Total Vélos", total_bikes, delta=delta_bikes if delta_bikes is not None else None)
+        with c3:
+            st.metric("⚡ Dont Électriques", df_live['⚡ Électriques'].sum())
+        with c4:
+            st.metric("Taux de Remplissage", f"{occupancy_color} {occupancy:.1f}%", delta=f"{delta_occupancy:+.1f}%" if delta_occupancy is not None else None)
 
-        col_map, col_data = st.columns([3, 2])
+        # Colonnes responsive : s'empilent sur mobile
+        col_map, col_data = st.columns([1, 1])
         
         with col_map:
             # Map avec couleurs dynamiques
@@ -374,8 +478,8 @@ with tab2:
     if not df_live.empty:
         add_to_historique_24h(df_live)
     
-    # Filtre de période d'analyse
-    col_period, col_info = st.columns([2, 3])
+    # Filtre de période d'analyse (responsive)
+    col_period, col_info = st.columns([1, 1])
     with col_period:
         period_options = {
             "1 heure": 1,
@@ -392,8 +496,6 @@ with tab2:
         )
         period_hours = period_options[selected_period]
     
-    st.header(f"⚡ Flux Temps Réel - Monitoring Automatique ({selected_period})")
-    
     with col_info:
         # Indicateur de dernière synchro
         if st.session_state.last_sync_time:
@@ -401,6 +503,8 @@ with tab2:
             st.markdown(f"**🔄 Dernière synchro : {last_sync_str}**")
         else:
             st.markdown("**🔄 Dernière synchro : En attente...**")
+    
+    st.header(f"⚡ Flux Temps Réel - Monitoring Automatique ({selected_period})")
     
     # Bouton de réinitialisation (optionnel, moins visible)
     with st.expander("⚙️ Options avancées", expanded=False):
@@ -455,24 +559,34 @@ with tab2:
             depots = len(flux_df[flux_df['Type'] == '📤 Dépôt'])
             prises = len(flux_df[flux_df['Type'] == '📥 Prise'])
             
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Mouvements totaux", total_mouvements)
-            c2.metric("Stations impactées", stations_bouge)
-            c3.metric("📤 Dépôts", depots)
-            c4.metric("📥 Prises", prises)
+            # Métriques en grille responsive (2x2 sur mobile)
+            c1, c2 = st.columns(2)
+            c3, c4 = st.columns(2)
+            
+            with c1:
+                st.metric("Mouvements totaux", total_mouvements)
+            with c2:
+                st.metric("Stations impactées", stations_bouge)
+            with c3:
+                st.metric("📤 Dépôts", depots)
+            with c4:
+                st.metric("📥 Prises", prises)
             
             st.markdown("---")
             st.subheader("📊 Détail des mouvements")
             
-            # Graphique des mouvements
+            # Graphique des mouvements (responsive)
             chart_data = flux_df.head(20).copy()  # Top 20
             chart = alt.Chart(chart_data).mark_bar(color="#005DAA").encode(
-                x=alt.X('Station', sort='-y'),
+                x=alt.X('Station', sort='-y', axis=alt.Axis(labelAngle=-45)),
                 y='Mouvement',
                 tooltip=['Station', 'Type', 'Mouvement', 'Total_prev', 'Total_curr']
             ).properties(
-                height=400,
+                height=300,
                 title="Top 20 des stations avec mouvements"
+            ).configure_view(
+                continuousWidth=400,
+                continuousHeight=300
             )
             st.altair_chart(chart, use_container_width=True)
             
